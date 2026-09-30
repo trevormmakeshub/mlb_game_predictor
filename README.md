@@ -1,8 +1,8 @@
 # MLB Game Predictor
-Welcome to the MLB Game Predictor! This project leverages advanced machine learning models to predict the outcomes of MLB games during the 2024 season. The primary aim is to provide accurate game-by-game predictions and season-long projections using a comprehensive historical dataset.
+Welcome to the MLB Game Predictor! This project leverages advanced machine learning models to predict the outcomes of MLB games. The primary aim is to provide accurate game-by-game predictions and season-long projections using a comprehensive historical dataset.
 
 ## Key Features
-- **Historical Data Utilization:** The models are trained on an extensive dataset that includes team statistics from nearly every game between the 2000 and 2024 seasons and is continuously updated. This ensures that there is a sufficient amount of data for the models to understand patterns between statistics and outcomes.
+- **Historical Data Utilization:** The training table is league-wide completed games from 2025-03-01 through the current season. Pre-2025 rows are not kept.
 - **Comprehensive Team Statistics:** The dataset includes a wide range of team statistics that cover almost every aspect of a baseball game. These encompass both offensive and defensive statistics, as well as season-wide and recent performance for each team.
 - **Machine Learning Models:** This project uses Ridge Classifier and Linear Regression models to predict the outcome and scores of games. After testing various models for both outcome and run prediction, these models consistently performed.
 - **Future Statistic Prediction:** This project includes the functionality to predict the statistics for any upcoming game from now until the end of the season using exponential moving averages and past team performance. This allows the model's predictive ability to not be limited to games, for it has concrete statistics.
@@ -32,21 +32,19 @@ Welcome to the MLB Game Predictor! This project leverages advanced machine learn
    ```
 
 ## Usage
-1. Run [`baseball_dataset.py`](baseball_dataset.py) to update the dataset with any recent statistics
+1. Run [`scripts/refresh_today.py`](scripts/refresh_today.py) to rebuild the 2025-current training table
    ```bash
-   python baseball_dataset.py
+   python scripts/refresh_today.py
    ```
-2. Run [`baseball_model.py`](baseball_model.py) to train the models with the new data
+2. The earlier scripts live in `legacy/`. They read `legacy/stats.csv` when that file is present.
    ```bash
-   python baseball_model.py
-   ```
-3. Run [`baseball_prediction.py`](baseball_prediction.py) to run the main program and request game predictions
-   ```bash
-   python baseball_prediction.py
+   python legacy/baseball_dataset.py
+   python legacy/baseball_model.py
+   python legacy/baseball_prediction.py
    ```
 
 ## Results
-The results of this project can be used when the [`baseball_prediction.py`](baseball_prediction.py) script is run.
+The results of this project can be used when [`scripts/refresh_today.py`](scripts/refresh_today.py) or [`legacy/baseball_prediction.py`](legacy/baseball_prediction.py) is run.
 
 ## Contributions
 I am open to all (relevant) contributions! To do so, please fork the repository and submit a pull request with your changes. 

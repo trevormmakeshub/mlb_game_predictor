@@ -51,3 +51,9 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Local env and rebuild caches (2025-2026 boxscores are re-fetched by scripts/refresh_today.py)
+.venv/
+artifacts/cache/
+__pycache__/
+*.pyc

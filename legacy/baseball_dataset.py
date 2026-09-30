@@ -4,11 +4,15 @@ import time
 import statsapi
 import pandas as pd
 from bs4 import BeautifulSoup
-import random
 from statistics import mean
 import os
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+STATS_CSV = str(HERE / "stats.csv")
+YEARS_FILE = str(HERE / "years_completed.json")
 
 #Dictionary of all MLB teams from the last 24 years along with their abbreviations and identifying number
 mlb_teams = {
@@ -128,7 +132,7 @@ def stats_per_year(year, years_completed):
         print(date)
 
         #Ensures the date is far enough past opening day to have enough statistics, and exludes statistics from today
-        if date >= opening_day and date < datetime.today().date() and str(date) not in list(pd.read_csv('stats.csv')['Date']):
+        if date >= opening_day and date < datetime.today().date() and str(date) not in list(pd.read_csv(STATS_CSV)['Date']):
 
             stats = {
                 'Date': [],
@@ -468,12 +472,12 @@ def stats_per_year(year, years_completed):
             
             #Updates existing statistics CSV file with new statistics
             new_stats = pd.DataFrame(stats)
-            existing_stats = pd.read_csv('stats.csv')
+            existing_stats = pd.read_csv(STATS_CSV)
             updated_stats = pd.concat([existing_stats, new_stats], ignore_index=True)
-            updated_stats.to_csv('stats.csv', index=False)
+            updated_stats.to_csv(STATS_CSV, index=False)
 
-        elif str(date) in list(pd.read_csv('stats.csv')['Date']):
-            df = pd.read_csv('stats.csv')
+        elif str(date) in list(pd.read_csv(STATS_CSV)['Date']):
+            df = pd.read_csv(STATS_CSV)
             hitURL = f'https://www.fangraphs.com/leaders/major-league?startdate={opening_day}&enddate={date}&ind=0&qual=0&pageitems=2000000000&season1=&season=&type=8&pos=all&stats=bat&team=0,ts&month=1000'
             hit_page = requests.get(hitURL)
             hit_soup = BeautifulSoup(hit_page.content, "html.parser")
@@ -532,17 +536,17 @@ def stats_per_year(year, years_completed):
                     df.loc[mask_away, 'FIP'] = new_fip_home  # FIP is for the opposing pitcher
 
             # Save the updated DataFrame
-            df.to_csv('stats.csv', index=False)
+            df.to_csv(STATS_CSV, index=False)
 
 def all_stats():
     '''
-    Runs the stats_per_year function from 2000 to 2024.
+    Runs the stats_per_year function from 2013 through the current season.
 
     Inputs: None
 
     Returns: None
     '''
-    years_file = 'years_completed.json'
+    years_file = YEARS_FILE
     if os.path.exists(years_file):
         with open(years_file, 'r') as f:
             years_completed = json.load(f).get('years_completed', [])
@@ -550,8 +554,8 @@ def all_stats():
     else:
         years_completed = [2000, 2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013]
 
-    #Iterates through each year from 2000 to 2024
-    for year in range(2013, 2026):
+    # Current season is the clock year, so the loop is not capped at 2024.
+    for year in range(2013, datetime.now().year + 1):
         if year in years_completed:
             continue
         stats_per_year(year, years_completed)
@@ -568,15 +572,14 @@ def all_stats():
 
 #Used to build the entire dataset
 #all_stats()
-#pd.DataFrame(stats).to_csv('stats.csv')
+#pd.DataFrame(stats).to_csv(STATS_CSV)
 
 
-while True:
-    try:
-        all_stats()
-    except Exception as e:
-        print(f"Script crashed with error: {e}")
-        print("Restarting script...")
-        time.sleep(3)
-
-# stats_per_year(2024)
+if __name__ == "__main__":
+    while True:
+        try:
+            all_stats()
+        except Exception as e:
+            print(f"Script crashed with error: {e}")
+            print("Restarting script...")
+            time.sleep(3)

@@ -1,15 +1,16 @@
-import pandas as pd
-import numpy as np
 import os
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score
-from sklearn.preprocessing import MinMaxScaler
-from datetime import datetime, timedelta
-import statsapi
 import pickle
-import time
 import warnings
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import statsapi
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+
+HERE = Path(__file__).resolve().parent
+SEASON = datetime.now().year
 
 # Ignore all warnings
 warnings.filterwarnings("ignore")
@@ -57,14 +58,17 @@ mlb_teams = {
 #nl_central = ['Milwaukee Brewers', 'St. Louis Cardinals', 'Pittsburgh Pirates', 'Cincinnati Reds', 'Chicago Cubs']
 
 
-# Load and preprocess data
-data = pd.read_csv('stats.csv')
-data = data[data['Date'].str.contains('2024', na=False)]
-data = data.reset_index().drop(['index'], axis=1)
-data = data.loc[:, ~data.columns.str.contains('^Unnamed')]
-data['Date'] = pd.to_datetime(data['Date'], format='%Y-%m-%d')
-data['Runs/Game'] = data['Total Runs']/data['Total Games']
-data = data.drop(['Total Runs', 'Total Games', 'RBIs', 'Runs Scored', 'Win?'], axis=1)
+def load_stats():
+    for path in (HERE / "stats.csv", Path.cwd() / "stats.csv"):
+        if path.is_file():
+            return pd.read_csv(path)
+    raise SystemExit(
+        "stats.csv is missing from legacy/ and the working directory. "
+        "Pre-2025 rows were dropped. Run python scripts/refresh_today.py"
+    )
+
+
+data = None
 
 #Differentiate between hitting statistics and pitching statistics
 hitting_stats = ['AVG', 'OBP', 'SLG', 'WRC+', 'WAR', 'K Percentage', 'BB Percentage', 'BSR', 'AVG/5 Players', 'OBP/5 Players', 'SLG/5 Players', 'WAR/5 Players', 'WRC+/5 Players', 'K Percentage/5 Players', 'BB Percentage/5 Players', 'AVG/Week', 'OBP/Week', 'SLG/Week', 'WAR/Week', 'WRC+/Week', 'K Percentage/Week', 'BB Percentage/Week', 'Runs/Game']
@@ -75,7 +79,7 @@ def calculate_moving_averages(stats, team):
     Generates exponential moving averages for each column in the dataset for a specific team
 
     Inputs:
-    stats -- Statistics for the 2024 season
+    stats -- Statistics for the current season
     team -- The desired team to generate rolling averages for
 
     Returns:
@@ -168,7 +172,7 @@ def dataset_maker(home, away, date, stats):
     home -- Home team of the game being predicted
     away -- Away team of the game being predicted
     date -- Date of the game
-    stats -- Statistics for the 2024 season
+    stats -- Statistics for the current season
 
     Returns:
     home_offense -- Data entry for the home team being on offense
@@ -191,14 +195,29 @@ def dataset_maker(home, away, date, stats):
 
     return home_offense, away_offense
 
-#Load the models used to predict game outcomes
-with open('win_model.pkl', 'rb') as file:
-    win_model = pickle.load(file)
+win_model = None
+run_model = None
 
-with open('run_model.pkl', 'rb') as file:
-    run_model = pickle.load(file)
+
+def load_models():
+    with open(HERE / "win_model.pkl", "rb") as file:
+        loaded_win = pickle.load(file)
+    with open(HERE / "run_model.pkl", "rb") as file:
+        loaded_run = pickle.load(file)
+    return loaded_win, loaded_run
+
 
 def main():
+    global data, win_model, run_model
+    data = load_stats()
+    data = data[data["Date"].astype(str).str.contains(str(SEASON), na=False)]
+    data = data.reset_index().drop(["index"], axis=1)
+    data = data.loc[:, ~data.columns.str.contains("^Unnamed")]
+    data["Date"] = pd.to_datetime(data["Date"], format="%Y-%m-%d")
+    data["Runs/Game"] = data["Total Runs"] / data["Total Games"]
+    data = data.drop(["Total Runs", "Total Games", "RBIs", "Runs Scored", "Win?"], axis=1)
+    win_model, run_model = load_models()
+
     def prediction(date, schedule):
         '''
         Predicts the outcomes of the games from a given schedule
@@ -275,7 +294,7 @@ def main():
         if int(day) < 10:
             day = '0' + day
         
-        date = datetime.strptime(f'2024-{month}-{day}', '%Y-%m-%d')
+        date = datetime.strptime(f'{SEASON}-{month}-{day}', '%Y-%m-%d')
         if date < datetime.today():
             print('Cannot predict games in the past.')
             next = input('Press any key to try again, or hit q to quit: ')
@@ -306,7 +325,7 @@ def main():
     
     if num == '2':
         date = find_date()
-        team=statsapi.lookup_team(lookup_value=input('Enter a team name (home or away): '), season=2024)[0]['id']
+        team=statsapi.lookup_team(lookup_value=input('Enter a team name (home or away): '), season=SEASON)[0]['id']
         schedule = statsapi.schedule(date=date.date(), team=team)
         prediction(date=date, schedule=schedule)
         
@@ -318,8 +337,8 @@ def main():
             main()
 
     if num == '3':
-        team=statsapi.lookup_team(lookup_value=input('Enter a team name (home or away): '), season=2024)[0]['id']
-        schedule = statsapi.schedule(start_date=datetime.today().date(), end_date='2024-12-31', team=team)
+        team=statsapi.lookup_team(lookup_value=input('Enter a team name (home or away): '), season=SEASON)[0]['id']
+        schedule = statsapi.schedule(start_date=datetime.today().date(), end_date=f'{SEASON}-12-31', team=team)
 
         for game in schedule:
             prediction(date=datetime.strptime(game['game_date'], '%Y-%m-%d'), schedule=[game])
