@@ -3,12 +3,25 @@ import requests
 import statsapi
 import pandas as pd
 from bs4 import BeautifulSoup
-import supabase
 from datetime import datetime
 import os
 from collections import defaultdict
 
-sb = supabase.Client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
+def supabase_client():
+    import supabase
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are not set")
+    return supabase.Client(url, key)
+
+
+class _LazySupabase:
+    def __getattr__(self, name):
+        return getattr(supabase_client(), name)
+
+
+sb = _LazySupabase()
 
 ALT_ABBR = {
     "Arizona Diamondbacks": {'ARI', 'AZ'},
@@ -323,7 +336,8 @@ def get_table(table_name):
 # df = pd.read_csv("test.csv")
 # df['offensive_team'] = df['offensive_team'].apply(lambda x: ALIAS_FLAT.get(x, x))
 # print(df)
-make_season_totals(2007, push_to_supabase=True)
+# Pre-2025 season totals are not rebuilt here. Training starts in 2025
+# via scripts/refresh_today.py.
 
 # Script for processing MLB stats from 2000 to 2025
 # while True:
