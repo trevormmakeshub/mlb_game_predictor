@@ -1,64 +1,11 @@
-# MLB Game Predictor
-Welcome to the MLB Game Predictor! This project leverages advanced machine learning models to predict the outcomes of MLB games. The primary aim is to provide accurate game-by-game predictions and season-long projections using a comprehensive historical dataset.
+# MLB Game Predictor 2026
+Current through 2026-09-30 on branch `refresh-2026-09-30`. Use this branch, not `main`. `main` is the old 2024 copy.
 
-## Key Features
-- **Historical Data Utilization:** The training table is league-wide completed games from 2025-03-01 through the current season. Pre-2025 rows are not kept.
-- **Comprehensive Team Statistics:** The dataset includes a wide range of team statistics that cover almost every aspect of a baseball game. These encompass both offensive and defensive statistics, as well as season-wide and recent performance for each team.
-- **Machine Learning Models:** This project uses Ridge Classifier and Linear Regression models to predict the outcome and scores of games. After testing various models for both outcome and run prediction, these models consistently performed.
-- **Future Statistic Prediction:** This project includes the functionality to predict the statistics for any upcoming game from now until the end of the season using exponential moving averages and past team performance. This allows the model's predictive ability to not be limited to games, for it has concrete statistics.
+Training table is league-wide completed games from 2025-03-18 through 2026-09-30. Pre-2025 rows were dropped. The model uses MLB Stats API box scores, Baseball Savant K% and BB%, and MLB team OPS versus LHP and RHP. FIP, xFIP, and park factor are not in this build. This model does not price sportsbook props and is not a bet.
 
-## Data Sources
-- [FanGraphs](https://www.fangraphs.com/leaders/major-league) for web scraping all necessary team statistics
-- [MLB-StatsAPI](https://github.com/toddrob99/MLB-StatsAPI) for finding schedules for given date ranges
+## Run
+```bash
+python scripts/refresh_today.py
+```
 
-## Installation
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/laplaces42/mlb_game_predictor.git
-   cd mlb_game_predictor
-   ```
-2. **Start a virtual environment**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-3. **Open an IDE (Optional)**
-   ```bash
-   code . #For VSCode
-   ```
-3. **Install [`requirements.txt`](requirements.txt)**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Usage
-1. Run [`scripts/refresh_today.py`](scripts/refresh_today.py) to rebuild the 2025-current training table
-   ```bash
-   python scripts/refresh_today.py
-   ```
-2. The earlier scripts live in `legacy/`. They read `legacy/stats.csv` when that file is present.
-   ```bash
-   python legacy/baseball_dataset.py
-   python legacy/baseball_model.py
-   python legacy/baseball_prediction.py
-   ```
-
-## Results
-The results of this project can be used when [`scripts/refresh_today.py`](scripts/refresh_today.py) or [`legacy/baseball_prediction.py`](legacy/baseball_prediction.py) is run.
-
-## Contributions
-I am open to all (relevant) contributions! To do so, please fork the repository and submit a pull request with your changes. 
-
-## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Contact
-
-If you have any questions or feedback, feel free to reach out!
-
-- **Email:** [laplace.sallis@gmail.com](mailto:laplace.sallis@gmail.com)
-- **LinkedIn:** [LaPlace Sallis IV](https://www.linkedin.com/in/laplace-sallis-iv-bbbb602a8/)
-- **GitHub:** [laplaces42](https://github.com/laplaces42)
-
-You can also open an issue on this repository if you have any questions or need support.
-
+Outputs land in `artifacts/`.
