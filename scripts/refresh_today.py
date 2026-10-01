@@ -8,10 +8,12 @@ Pre-2025 rows are not kept and are not copied forward. The two-game wild-card
 file is only a slice of that table. The remaining-games file lists every game
 on the Denver date that is not final.
 
-Starter FIP, K%, BB%, lineup wRC+ versus the starter's hand, and park factor
-are taken from pybaseball. A missing field is left out of the model. Box scores
-supply rest, last-start innings, 14-day bullpen ERA, yesterday's bullpen
-innings, 14-day runs scored and allowed, and the Game 1 winner.
+Starter K% and BB% come from Baseball Savant. Lineup OPS versus the starter's
+hand comes from the MLB Stats API. Starter FIP is computed from the stored
+MLB pitching line: (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, using prior starts
+only. If HBP is missing, the walk term is BB only. Park factor stays out of
+the model. Box scores supply rest, last-start innings, 14-day bullpen ERA,
+yesterday's bullpen innings, 14-day runs scored and allowed, and the Game 1 winner.
 """
 
 from __future__ import annotations
@@ -112,14 +114,16 @@ NAMED_ABSENCES = ("Aaron Judge", "Roman Anthony", "Jeremiah Estrada")
 SIDE_STATS = (
     "starter_rest_days",
     "starter_last_ip",
+    "starter_fip",
     "bullpen_era_14",
     "bullpen_ip_yesterday",
     "rs_14",
     "ra_14",
 )
+FIP_CONST = 3.10
+FIP_USE_HBP = True
 GAME_STATS = ("home_won_game1",)
 PYB_SIDE = (
-    "starter_fip",
     "starter_xfip",
     "starter_k_pct",
     "starter_bb_pct",
@@ -210,7 +214,34 @@ def fip_from_counts(outs: int, hr: int, bb: int, hbp: int, k: int, const: float)
     if outs < 3:
         return None
     ip = outs_to_ip(outs)
-    return (13 * hr + 3 * (bb + hbp) - 2 * k) / ip + const
+    walks = (bb + hbp) if FIP_USE_HBP else bb
+    return (13 * hr + 3 * walks - 2 * k) / ip + const
+
+
+def fip_from_prior(starts: list[dict]) -> float | None:
+    if not starts:
+        return None
+    return fip_from_counts(
+        sum(int(item["outs"]) for item in starts),
+        sum(int(item["hr"]) for item in starts),
+        sum(int(item["bb"]) for item in starts),
+        sum(int(item.get("hbp") or 0) for item in starts),
+        sum(int(item["k"]) for item in starts),
+        FIP_CONST,
+    )
+
+
+def starters_have_hbp(records: list[dict]) -> bool:
+    saw = False
+    for record in records:
+        for side in ("home_starter", "away_starter"):
+            starter = record.get(side)
+            if not starter:
+                continue
+            saw = True
+            if "hbp" not in starter:
+                return False
+    return saw
 
 
 def self_check() -> None:
@@ -816,7 +847,10 @@ def store_pitcher_table(ext: dict, frame: pd.DataFrame, source: str) -> None:
     present = {field: pair for field, pair in columns.items() if pair[1]}
     for field, (_key, _col) in columns.items():
         if field not in present:
-            skip_field(ext, field, f"{source} has no {field} column")
+            if field == "FIP":
+                note(f"{source} has no FIP column. Starter FIP is computed from the stored MLB pitching line.")
+            else:
+                skip_field(ext, field, f"{source} has no {field} column")
     if not present:
         return
     name_index: dict[str, list] = defaultdict(list)
@@ -861,6 +895,8 @@ def store_pitcher_table(ext: dict, frame: pd.DataFrame, source: str) -> None:
             ext["have"].add(field)
             ext["used"].append(f"{source} {field} n={count}")
             note(f"{source} {field} stored for {count} pitchers; joined only onto 2026 games")
+        elif field == "FIP":
+            note(f"{source} FIP column was empty. Starter FIP is computed from the stored MLB pitching line.")
         else:
             skip_field(ext, field, f"{source} {field} column was empty")
 
@@ -976,12 +1012,6 @@ def pull_savant_pitching(ext: dict) -> None:
         return
     note(f"Baseball Savant custom leaderboard 2025 rows={len(frame)} cols={list(frame.columns)}")
     store_pitcher_table(ext, frame, "Baseball Savant custom leaderboard 2025")
-    if "FIP" not in ext["have"] and "xFIP" not in ext["have"]:
-        skip_field(
-            ext,
-            "starter FIP or xFIP",
-            "Baseball Savant returned empty FIP and xFIP columns, and the MLB Stats API pitching line has no FIP or xFIP field",
-        )
 
 
 def pull_lineup_ops(ext: dict) -> None:
@@ -1064,7 +1094,11 @@ def pull_pybaseball(years: tuple[int, ...]) -> dict:
     ext = empty_ext()
     pull_savant_pitching(ext)
     pull_lineup_ops(ext)
-    pull_savant_park(ext)
+    skip_field(
+        ext,
+        "park factor",
+        "Baseball Savant park factors missed Athletics and Tampa Bay Rays. No park factor was invented.",
+    )
     return ext
 
 
@@ -1276,6 +1310,7 @@ def side_features(hist: History, record: dict, side: str) -> dict:
     return {
         "starter_last_ip": outs_to_ip(last["outs"]) if last else None,
         "starter_rest_days": (game_date - last["date"]).days if last else None,
+        "starter_fip": fip_from_prior(starts),
         "bullpen_era_14": rate(sum(item["er"] for item in pen) * 27, pen_outs),
         "bullpen_ip_yesterday": bullpen_ip_yesterday(hist, team_id, game_date),
         "rs_14": float(sum(item["runs_scored"] for item in team_14)),
@@ -1418,7 +1453,7 @@ def feature_columns(frame: pd.DataFrame) -> list[str]:
     for name in PYB_GAME:
         if name in frame.columns and frame[name].notna().any():
             cols.append(name)
-    return cols
+    return list(dict.fromkeys(cols))
 
 
 def scale_fit(train: pd.DataFrame):
@@ -1770,7 +1805,14 @@ def score_prediction_rows(
     data_min: date | None = None,
     data_max: date | None = None,
 ) -> tuple[list[dict], float, list[str]]:
+    for col in ("home_starter_fip", "away_starter_fip"):
+        if col not in frame.columns or not frame[col].notna().any():
+            note(f"{col} is not in the table; stopping before training")
+            raise SystemExit(2)
     features = feature_columns(frame)
+    if "home_starter_fip" not in features or "away_starter_fip" not in features:
+        note("starter FIP is not a model feature; stopping before training")
+        raise SystemExit(2)
     model_frame = frame.dropna(subset=["home_win"]).copy()
     model_frame["game_date"] = pd.to_datetime(model_frame["game_date"])
     if "game_number" not in model_frame.columns:
@@ -2097,6 +2139,20 @@ def main() -> None:
     team_names.add("Oakland Athletics")
     roster = fetch_named_roster()
     book = parse_absences(transactions, team_names, roster)
+
+    global FIP_USE_HBP
+    FIP_USE_HBP = starters_have_hbp(records)
+    if FIP_USE_HBP:
+        ext["used"].append(
+            "starter FIP from the stored MLB Stats API pitching line, prior starts only, "
+            "(13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, IP = outs/3. HBP was present"
+        )
+    else:
+        ext["used"].append(
+            "starter FIP from the stored MLB Stats API pitching line, prior starts only, "
+            "(13*HR + 3*BB - 2*K) / IP + 3.10 because HBP was missing. IP = outs/3."
+        )
+        note("HBP was missing from the stored pitching line. Starter FIP uses BB only.")
 
     rows, _hist = build_table(records, book, ext)
     data_min, data_max = confirm_dates(records, finals)
