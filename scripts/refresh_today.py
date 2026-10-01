@@ -16,6 +16,7 @@ innings, 14-day runs scored and allowed, and the Game 1 winner.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sys
@@ -119,9 +120,20 @@ SIDE_STATS = (
 GAME_STATS = ("home_won_game1",)
 PYB_SIDE = (
     "starter_fip",
+    "starter_xfip",
     "starter_k_pct",
     "starter_bb_pct",
+    "lineup_ops_vs_hand",
     "lineup_wrc_vs_hand",
+)
+SAVANT_PITCH_URL = (
+    "https://baseballsavant.mlb.com/leaderboard/custom"
+    "?year={year}&type=pitcher&filter=&sort=1&sortDir=desc&min=1"
+    "&selections=k_percent,bb_percent,fip,xfip&csv=true"
+)
+SAVANT_PARK_URL = (
+    "https://baseballsavant.mlb.com/leaderboard/statcast-park-factors"
+    "?type=year&year=2025&batSide=&stat=index_woba"
 )
 PYB_GAME = ("park_factor",)
 BUGS_FIXED = (
@@ -778,6 +790,7 @@ def empty_ext() -> dict:
     return {
         "pitcher_prior": {},
         "lineup_wrc": {},
+        "lineup_ops": {},
         "park": {},
         "used": [],
         "skipped": [],
@@ -795,9 +808,10 @@ def store_pitcher_table(ext: dict, frame: pd.DataFrame, source: str) -> None:
     id_col = first_col(frame, ("mlbID", "MLBAMID", "key_mlbam", "player_id", "mlb_id"))
     name_col = first_col(frame, ("Name", "Player", "NameASCII"))
     columns = {
-        "FIP": ("fip", first_col(frame, ("FIP",))),
-        "K%": ("k_pct", first_col(frame, ("K%", "K_pct", "SO%", "SO_pct"))),
-        "BB%": ("bb_pct", first_col(frame, ("BB%", "BB_pct"))),
+        "FIP": ("fip", first_col(frame, ("FIP", "fip", "p_fip"))),
+        "xFIP": ("xfip", first_col(frame, ("xFIP", "xfip", "p_xfip"))),
+        "K%": ("k_pct", first_col(frame, ("K%", "K_pct", "k_percent", "p_k_percent"))),
+        "BB%": ("bb_pct", first_col(frame, ("BB%", "BB_pct", "bb_percent", "p_bb_percent"))),
     }
     present = {field: pair for field, pair in columns.items() if pair[1]}
     for field, (_key, _col) in columns.items():
@@ -917,84 +931,140 @@ def store_park_table(ext: dict, frame: pd.DataFrame, source: str, year: int) -> 
     return False
 
 
-def pull_pybaseball(years: tuple[int, ...]) -> dict:
-    """FIP, K%, BB%, lineup wRC+ versus hand, and park factor. Skip a missing field."""
-    ext = empty_ext()
+def fetch_text(url: str) -> str:
+    response = http().get(url, timeout=60)
+    response.raise_for_status()
+    return response.text
+
+
+def parse_rate(value) -> float | None:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return None
+    if text.startswith("."):
+        text = "0" + text
     try:
-        import pybaseball
+        return float(text)
+    except ValueError:
+        return None
+
+
+def mlb_team_names(season: int) -> dict[int, str]:
+    payload = get_json(f"{API}/teams", {"sportId": 1, "season": season})
+    names = {}
+    for team in payload.get("teams") or []:
+        name = canon_team(team.get("name") or "")
+        if team.get("id") and name in EXPECTED_TEAMS:
+            names[int(team["id"])] = name
+    return names
+
+
+def pull_savant_pitching(ext: dict) -> None:
+    note("FanGraphs is not called. The last run returned HTTP 403.")
+    note("pybaseball Savant wrappers publish expected stats and percentile ranks, not the K% rate, BB% rate, FIP, or xFIP")
+    try:
+        frame = pd.read_csv(io.StringIO(fetch_text(SAVANT_PITCH_URL.format(year=2025))))
     except Exception as exc:
-        for field in ("FIP", "K%", "BB%", "lineup wRC+ versus starter hand", "park factor"):
-            skip_field(ext, field, f"pybaseball import failed ({exc})")
-        return ext
-    note("Savant expected-stat tables do not publish FIP, K%, BB%, wRC+, or park factor, so they are not used as substitutes")
-
-    pitch_frames = []
-    for year in years:
-        fg_pitch = call_table(
-            f"FanGraphs pitching {year}",
-            pybaseball.pitching_stats,
-            [((year, year), {"qual": 0}), ((year,), {"qual": 0})],
+        for field in ("starter FIP or xFIP", "K%", "BB%"):
+            skip_field(ext, field, f"Baseball Savant custom leaderboard failed ({exc})")
+        return
+    if frame is None or len(frame) == 0:
+        for field in ("starter FIP or xFIP", "K%", "BB%"):
+            skip_field(ext, field, "Baseball Savant custom leaderboard returned no rows")
+        return
+    note(f"Baseball Savant custom leaderboard 2025 rows={len(frame)} cols={list(frame.columns)}")
+    store_pitcher_table(ext, frame, "Baseball Savant custom leaderboard 2025")
+    if "FIP" not in ext["have"] and "xFIP" not in ext["have"]:
+        skip_field(
+            ext,
+            "starter FIP or xFIP",
+            "Baseball Savant returned empty FIP and xFIP columns, and the MLB Stats API pitching line has no FIP or xFIP field",
         )
-        if fg_pitch is not None:
-            pitch_frames.append((f"FanGraphs pitching {year}", fg_pitch, year))
-        else:
-            bref = call_table(
-                f"Baseball Reference pitching {year}",
-                pybaseball.pitching_stats_bref,
-                [((year,), {})],
-            )
-            if bref is not None:
-                pitch_frames.append((f"Baseball Reference pitching {year}", bref, year))
-                note(f"Baseball Reference pitching {year} is inspected for FIP, K%, and BB% columns only")
-    prior_pitch = [(label, frame) for label, frame, year in pitch_frames if year == 2025]
-    if not prior_pitch:
-        for field in ("FIP", "K%", "BB%"):
-            skip_field(ext, field, "pybaseball returned no 2025 pitching table")
-    else:
-        label, frame = prior_pitch[0]
-        store_pitcher_table(ext, frame, label)
-    for label, _frame, year in pitch_frames:
-        if year != 2025:
-            note(f"{label} was pulled and not joined backward onto {year} games")
 
-    hand_saved = False
-    for year in years:
-        fg_team = call_table(
-            f"FanGraphs team batting {year}",
-            pybaseball.team_batting,
-            [((year, year), {}), ((year,), {})],
-        )
-        if fg_team is not None and year == 2025 and not hand_saved:
-            store_hand_wrc(ext, fg_team, f"FanGraphs team batting {year}")
-            hand_saved = "wRC+_vs_hand" in ext["have"]
-            if "park_factor" not in ext["have"]:
-                store_park_table(ext, fg_team, f"FanGraphs team batting {year}", year)
-        elif fg_team is not None:
-            note(f"FanGraphs team batting {year} was pulled and not joined backward")
-        elif year == 2025:
-            bref_team = call_table(
-                f"Baseball Reference team batting {year}",
-                pybaseball.team_batting_bref,
-                [((year,), {})],
-            )
-            if bref_team is not None:
-                note(f"Baseball Reference team batting {year} is inspected for a wRC+ hand split only")
-                store_hand_wrc(ext, bref_team, f"Baseball Reference team batting {year}")
-                hand_saved = "wRC+_vs_hand" in ext["have"]
-    if "wRC+_vs_hand" not in ext["have"] and not any(
-        item.startswith("lineup wRC+") for item in ext["skipped"]
-    ):
-        skip_field(ext, "lineup wRC+ versus starter hand", "pybaseball returned no wRC+ split versus pitcher hand")
 
-    if "park_factor" not in ext["have"]:
+def pull_lineup_ops(ext: dict) -> None:
+    try:
+        names = mlb_team_names(2025)
+    except Exception as exc:
+        skip_field(ext, "lineup OPS or wRC+ versus starter hand", f"MLB team list failed ({exc})")
+        return
+    found: dict[tuple[str, str], float] = {}
+    for team_id, name in names.items():
         try:
-            lahman = pybaseball.teams_core()
+            payload = get_json(
+                f"{API}/teams/{team_id}/stats",
+                {"stats": "statSplits", "group": "hitting", "season": 2025, "sitCodes": "vl,vr"},
+            )
         except Exception as exc:
-            lahman = None
-            skip_field(ext, "park factor", f"pybaseball Lahman teams table failed ({exc})")
-        if lahman is not None and not store_park_table(ext, lahman, "Lahman teams", 2025):
-            if "park_factor" not in ext["have"] and not any(item.startswith("park factor:") for item in ext["skipped"]):
-                skip_field(ext, "park factor", "pybaseball has no 2025 park factor covering all 30 teams")
+            note(f"MLB hitting splits failed for {name}: {exc}")
+            continue
+        for group in payload.get("stats") or []:
+            for split in group.get("splits") or []:
+                code = (split.get("split") or {}).get("code")
+                hand = {"vl": "L", "vr": "R"}.get(code)
+                ops = parse_rate((split.get("stat") or {}).get("ops"))
+                if hand and ops is not None:
+                    found[(name, hand)] = ops
+    covered = {team for team in EXPECTED_TEAMS if (team, "L") in found and (team, "R") in found}
+    if set(EXPECTED_TEAMS) <= covered:
+        ext["lineup_ops"] = found
+        ext["have"].add("OPS_vs_hand")
+        ext["used"].append("MLB Stats API 2025 team OPS versus LHP and RHP")
+        note("MLB Stats API 2025 OPS versus hand stored for 30 teams; joined only onto 2026 games")
+        note("wRC+ versus hand was not in the MLB Stats API split. OPS is stored instead of a wRC+ label")
+        return
+    missing = [team for team in EXPECTED_TEAMS if team not in covered]
+    skip_field(
+        ext,
+        "lineup OPS or wRC+ versus starter hand",
+        f"MLB Stats API splits did not cover every team ({', '.join(missing)})",
+    )
+
+
+def pull_savant_park(ext: dict) -> None:
+    try:
+        text = fetch_text(SAVANT_PARK_URL)
+        start = text.find('[{"grouping_venue_conditions"')
+        if start < 0:
+            raise ValueError("park-factor page had no data array")
+        rows, _end = json.JSONDecoder().raw_decode(text[start:])
+        names = mlb_team_names(2025)
+    except Exception as exc:
+        skip_field(ext, "park factor", f"Baseball Savant park factors failed ({exc})")
+        return
+    found: dict[str, float] = {}
+    for row in rows:
+        if str(row.get("key_year")) != "2025" or str(row.get("is_sport_mlb")) != "1":
+            continue
+        if row.get("key_bat_side") != "All" or row.get("grouping_venue_conditions") != "All":
+            continue
+        try:
+            team_id = int(row.get("main_team_id"))
+        except (TypeError, ValueError):
+            continue
+        name = names.get(team_id)
+        value = parse_rate(row.get("index_woba"))
+        if name and value is not None:
+            found[name] = value
+    if set(EXPECTED_TEAMS) <= set(found):
+        ext["park"] = found
+        ext["have"].add("park_factor")
+        ext["used"].append("Baseball Savant 2025 park factor index_woba, 3-year rolling window published as 2023-2025")
+        note("Baseball Savant park factor index_woba stored for 30 teams; joined only onto 2026 games")
+        return
+    missing = [team for team in EXPECTED_TEAMS if team not in found]
+    skip_field(ext, "park factor", f"Baseball Savant park factors missed {', '.join(missing)}")
+
+
+def pull_pybaseball(years: tuple[int, ...]) -> dict:
+    """Savant and MLB Stats API only. FanGraphs is not called."""
+    del years
+    ext = empty_ext()
+    pull_savant_pitching(ext)
+    pull_lineup_ops(ext)
+    pull_savant_park(ext)
     return ext
 
 
@@ -1244,7 +1314,7 @@ def attach_pybaseball(row: dict, record: dict, ext: dict) -> None:
     if record["game_date"].year < 2026:
         return
     have = ext.get("have") or set()
-    if {"FIP", "K%", "BB%"} & set(have):
+    if {"FIP", "xFIP", "K%", "BB%"} & set(have):
         home_prior = prior_lookup(ext, record.get("home_starter"))
         away_prior = prior_lookup(ext, record.get("away_starter"))
         if "FIP" in have:
@@ -1256,6 +1326,15 @@ def attach_pybaseball(row: dict, record: dict, ext: dict) -> None:
         if "BB%" in have:
             row["home_starter_bb_pct"] = home_prior.get("bb_pct")
             row["away_starter_bb_pct"] = away_prior.get("bb_pct")
+        if "xFIP" in have:
+            row["home_starter_xfip"] = home_prior.get("xfip")
+            row["away_starter_xfip"] = away_prior.get("xfip")
+    if "OPS_vs_hand" in have:
+        home_hand = (record.get("home_starter") or {}).get("hand")
+        away_hand = (record.get("away_starter") or {}).get("hand")
+        ops = ext.get("lineup_ops") or {}
+        row["home_lineup_ops_vs_hand"] = ops.get((canon_team(record["home_name"]), away_hand))
+        row["away_lineup_ops_vs_hand"] = ops.get((canon_team(record["away_name"]), home_hand))
     if "wRC+_vs_hand" in have:
         home_hand = (record.get("home_starter") or {}).get("hand")
         away_hand = (record.get("away_starter") or {}).get("hand")
@@ -1368,13 +1447,24 @@ def lineup_source(ext: dict, raw_home, raw_away) -> str:
 
 def write_notes(summary: dict) -> None:
     skipped = summary.get("skipped") or ["none"]
+    added = summary.get("used") or ["none"]
     body = [
         "# Notes",
         "",
-        "## Bugs fixed",
+        "## Sources used",
+        "",
+        "FanGraphs was not called. The previous run returned HTTP 403.",
+        "",
+        "Sources used: " + ", ".join(added) + ".",
+        "",
+        "Schedule and final box scores remain the MLB Stats API. 2025 Savant and MLB split totals are joined only onto 2026 games.",
+        "",
+        "## Fields added",
         "",
     ]
-    body.extend(f"- {item}" for item in BUGS_FIXED)
+    body.extend(f"- {item}" for item in added)
+    body.extend(["", "## Fields still skipped", ""])
+    body.extend(f"- {item}" for item in skipped)
     body.extend(
         [
             "",
@@ -1388,20 +1478,12 @@ def write_notes(summary: dict) -> None:
             "",
             f"Features: {summary['feature_count']}. September accuracy: {summary['accuracy']:.4f}.",
             "",
-            "## Fields skipped",
+            "## Bugs fixed",
             "",
         ]
     )
-    body.extend(f"- {item}" for item in skipped)
-    body.extend(
-        [
-            "",
-            "Sources used: " + ", ".join(summary["used"] or ["MLB Stats API box scores"]) + ".",
-            "",
-            "this model does not price sportsbook props and is not a bet.",
-            "",
-        ]
-    )
+    body.extend(f"- {item}" for item in BUGS_FIXED)
+    body.extend(["", "this model does not price sportsbook props and is not a bet.", ""])
     NOTES_PATH.write_text("\n".join(body), encoding="utf-8")
 
 
@@ -1598,7 +1680,7 @@ def wrc_plus_2026(records: list[dict]) -> dict[str, int]:
     return {team: int(round(value - weighted + 100.0)) for team, value in raw.items()}
 
 
-def write_all_teams(records: list[dict], data_min: date, data_max: date, snapshot: date) -> pd.DataFrame:
+def write_all_teams(records: list[dict], data_min: date, data_max: date, snapshot: date, ext: dict | None = None) -> pd.DataFrame:
     names = {canon_team(record["home_name"]) for record in records} | {
         canon_team(record["away_name"]) for record in records
     }
@@ -1634,17 +1716,29 @@ def write_all_teams(records: list[dict], data_min: date, data_max: date, snapsho
             bullpen = ""
         else:
             bullpen = f"{(slot['pen_er'] * 27.0 / slot['pen_outs']):.3f}"
-        rows.append(
-            {
-                "team": team,
-                "last_14_runs_scored": slot["last_14_runs_scored"],
-                "last_14_runs_allowed": slot["last_14_runs_allowed"],
-                "bullpen_era_14d": bullpen,
-                "data_min": data_min.isoformat(),
-                "data_cutoff": data_max.isoformat(),
-            }
-        )
-    frame = pd.DataFrame(rows, columns=list(TEAM_COLUMNS))
+        ops = (ext or {}).get("lineup_ops") or {}
+        park = (ext or {}).get("park") or {}
+        row = {
+            "team": team,
+            "last_14_runs_scored": slot["last_14_runs_scored"],
+            "last_14_runs_allowed": slot["last_14_runs_allowed"],
+            "bullpen_era_14d": bullpen,
+            "data_min": data_min.isoformat(),
+            "data_cutoff": data_max.isoformat(),
+        }
+        if "OPS_vs_hand" in ((ext or {}).get("have") or set()):
+            row["ops_vs_lhp"] = ops.get((team, "L"))
+            row["ops_vs_rhp"] = ops.get((team, "R"))
+        if "park_factor" in ((ext or {}).get("have") or set()):
+            row["park_factor"] = park.get(team)
+        rows.append(row)
+    columns = ["team", "last_14_runs_scored", "last_14_runs_allowed", "bullpen_era_14d"]
+    if rows and "ops_vs_lhp" in rows[0]:
+        columns.extend(["ops_vs_lhp", "ops_vs_rhp"])
+    if rows and "park_factor" in rows[0]:
+        columns.append("park_factor")
+    columns.extend(["data_min", "data_cutoff"])
+    frame = pd.DataFrame(rows, columns=columns)
     if len(frame) != 30 or frame["team"].nunique() != 30:
         note(f"all-teams file has {len(frame)} rows; stopping")
         raise SystemExit(2)
@@ -2007,7 +2101,7 @@ def main() -> None:
     rows, _hist = build_table(records, book, ext)
     data_min, data_max = confirm_dates(records, finals)
     print_known_finals(records, schedule)
-    write_all_teams(records, data_min, data_max, cutoff)
+    write_all_teams(records, data_min, data_max, cutoff, ext)
 
     hist = rebuild_history(records)
     pred_rows = []
