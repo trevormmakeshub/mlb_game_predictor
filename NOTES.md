@@ -41,3 +41,5 @@ Features: 21. September accuracy: 0.5586.
 - pip install -r requirements.txt failed on numpy==2.0.0 because Python 3.13 has no wheel for that pin and this machine has no C compiler. numpy, pandas, scikit-learn, and scipy were pinned to the installed wheels (2.5.3, 3.0.6, 1.9.1, 1.18.1). The retry succeeded.
 
 this model does not price sportsbook props and is not a bet.
+
+park factor missing, xFIP missing
