@@ -1,3 +1,2 @@
-date,away,home,home_win_prob,predicted_away_runs,predicted_home_runs,line
-2026-09-30,Boston Red Sox,New York Yankees,0.5578,4.14,4.13,not a bet
-2026-09-30,Chicago Cubs,San Diego Padres,0.5524,4.06,4.34,not a bet
+date,away,home,home_win_prob,line,reason
+2026-10-01,Philadelphia Phillies,Atlanta Braves,,not a bet,"October 1 schedule status is Live / In Progress and the response has no probable pitchers, so the saved model cannot score it."
