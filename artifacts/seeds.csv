@@ -1,2 +1,2 @@
-date,away,home,home_win_prob,line,reason
-2026-10-01,Philadelphia Phillies,Atlanta Braves,,not a bet,"October 1 schedule status is Live / In Progress and the response has no probable pitchers, so the saved model cannot score it."
+date,away,home,home_win_prob,line,reason,away_runs,home_runs
+2026-10-01,Philadelphia Phillies,Atlanta Braves,,not a bet,"October 1 schedule status is Final. Score from that response: Philadelphia Phillies 2, Atlanta Braves 6. The saved model was not scored, so home_win_prob stays blank.",2,6

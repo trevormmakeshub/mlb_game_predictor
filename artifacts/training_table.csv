@@ -4912,3 +4912,10 @@ game_pk,game_date,game_type,away,home,away_runs,home_runs,home_win,starter_away,
 849841,2026-09-30,F,Philadelphia Phillies,Atlanta Braves,4,3,0,Cristopher Sánchez,Tyler Mahle,6.0,5.0,3.749222065063649,3.826771653543307,2.6666666666666665,45.0,42.0,5.0,7.0,2.6463182897862234,6.165354330708661,3.0,38.0,53.0,1,19.1,26.3,8.4,5.5,0.716,0.764
 849846,2026-09-30,F,Chicago White Sox,Houston Astros,7,3,0,Sean Burke,Hunter Brown,5.0,5.333333333333333,3.3494305239179956,3.836842105263158,8.333333333333334,64.0,48.0,5.0,5.333333333333333,4.431529093369418,4.295454545454546,6.0,74.0,52.0,0,28.3,22.3,7.8,10.6,0.706,0.666
 849848,2026-09-30,F,Boston Red Sox,New York Yankees,2,9,1,Sonny Gray,Max Fried,8.0,6.666666666666667,2.942436974789916,3.292682926829268,2.6666666666666665,55.0,45.0,7.0,6.0,3.411725452812202,3.375,3.3333333333333335,24.0,41.0,1,23.6,26.7,6.4,5.0,0.783,0.743
+849844,2026-10-01,F,Philadelphia Phillies,Atlanta Braves,2,6,1,Aaron Nola,Ray Kerr,,,4.1,,,,,,,4.730674846625767,,,,,,,,,,,
+849828,2026-10-03,D,Atlanta Braves,Los Angeles Dodgers,3,5,1,Dylan Dodd,Tarik Skubal,,,2.400711743772242,,,,,,,,,,,,,,,,,,
+849829,2026-10-03,D,Chicago White Sox,Cleveland Guardians,3,0,0,Hagen Smith,Parker Messick,,,3.046902654867257,,,,,,,1.5,,,,,,,,,,,
+849830,2026-10-03,D,San Diego Padres,Milwaukee Brewers,2,3,1,Robbie Ray,Jacob Misiorowski,,,2.537762237762238,,,,,,,4.326341463414634,,,,,,,,,,,
+849835,2026-10-03,D,New York Yankees,Tampa Bay Rays,0,1,1,Gerrit Cole,Drew Rasmussen,,,3.277018633540373,,,,,,,3.926771653543307,,,,,,,,,,,
+849823,2026-10-04,D,Atlanta Braves,Los Angeles Dodgers,3,2,0,Ray Kerr,Blake Snell,,,2.470731707317073,,,,,,,3.415789473684211,,,,,,,,,,,
+849825,2026-10-04,D,San Diego Padres,Milwaukee Brewers,3,4,1,Michael King,Logan Henderson,,,3.253638814016173,,,,,,,4.147738693467337,,,,,,,,,,,

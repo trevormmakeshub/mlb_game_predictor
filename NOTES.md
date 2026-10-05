@@ -25,8 +25,8 @@ Schedule and final box scores remain the MLB Stats API. 2025 Savant and MLB spli
 The training table is league-wide completed games from 2025-03-01. Pre-2025 rows were dropped. The two-game file is only a slice of the full table.
 
 Minimum date: 2025-03-18
-Maximum date: 2026-09-30
-Row count: 4913
+Maximum date: 2026-10-04
+Row count: 4920
 
 Features: 21. September accuracy: 0.5586.
 
@@ -43,3 +43,5 @@ Features: 21. September accuracy: 0.5586.
 this model does not price sportsbook props and is not a bet.
 
 park factor missing, xFIP missing
+
+October 1 through October 4 finals were added from the saved MLB Stats API schedule. Starter FIP uses prior pitching lines only. The saved model was not scored. FanGraphs was not called.
