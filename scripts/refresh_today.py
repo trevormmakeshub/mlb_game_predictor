@@ -4,16 +4,21 @@
 
 Completed games only, from 2025-03-01 through games that are final when this
 process checks the MLB schedule. America/Denver decides the cutoff date.
-Pre-2025 rows are not kept and are not copied forward. The two-game wild-card
-file is only a slice of that table. The remaining-games file lists every game
-on the Denver date that is not final.
+This copy runs only when that date is 2026-11-07. Pre-2025 rows are not kept
+and are not copied forward. The two-game wild-card file is only a slice of
+that table. The remaining-games file lists every game on the Denver date that
+is not final.
 
 Starter K% and BB% come from Baseball Savant. Lineup OPS versus the starter's
 hand comes from the MLB Stats API. Starter FIP is computed from the stored
 MLB pitching line: (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, using prior starts
-only. If HBP is missing, the walk term is BB only. Park factor stays out of
-the model. Box scores supply rest, last-start innings, 14-day bullpen ERA,
-yesterday's bullpen innings, 14-day runs scored and allowed, and the Game 1 winner.
+only. If HBP is missing, the walk term is BB only. Starter xFIP uses the
+published Savant column when it has values. When that column is empty, xFIP
+is computed from Savant 2025 fly balls and the 2025 MLB pitching line, and it
+is joined only onto 2026 games. Park factor is stored only when one Savant
+season covers all 30 clubs. Box scores supply rest, last-start innings,
+14-day bullpen ERA, yesterday's bullpen innings, 14-day runs scored and
+allowed, and the Game 1 winner.
 """
 
 from __future__ import annotations
@@ -43,8 +48,8 @@ BOX_CACHE = CACHE / "boxscores"
 HAND_CACHE = CACHE / "hands.json"
 TABLE_PATH = ROOT / "artifacts" / "training_table.csv"
 PRED_PATH = ROOT / "artifacts" / "wc_2026-09-30_predictions.csv"
-ALL_TEAMS_PATH = ROOT / "artifacts" / "mlb_2026-09-30_all_teams.csv"
-REMAINING_PATH = ROOT / "artifacts" / "mlb_2026-09-30_remaining_games.csv"
+ALL_TEAMS_PATH = ROOT / "artifacts" / "mlb_2026-11-07_all_teams.csv"
+REMAINING_PATH = ROOT / "artifacts" / "mlb_2026-11-07_remaining_games.csv"
 NOTES_PATH = ROOT / "NOTES.md"
 SLICE_MATCHUPS = (
     ("Boston Red Sox", "New York Yankees"),
@@ -104,7 +109,9 @@ EXPECTED_TEAMS = (
 )
 
 START = date(2025, 3, 1)
+AS_OF = date(2026, 11, 7)
 TRAIN_END = date(2026, 9, 1)
+PREVIOUS_MAX = date(2026, 10, 4)
 GAME_TYPES = {"R", "F", "D", "L", "W"}
 SCHEMA = 1
 API = "https://statsapi.mlb.com/api/v1"
@@ -133,11 +140,11 @@ PYB_SIDE = (
 SAVANT_PITCH_URL = (
     "https://baseballsavant.mlb.com/leaderboard/custom"
     "?year={year}&type=pitcher&filter=&sort=1&sortDir=desc&min=1"
-    "&selections=k_percent,bb_percent,fip,xfip&csv=true"
+    "&selections=k_percent,bb_percent,fip,xfip,flyballs&csv=true"
 )
 SAVANT_PARK_URL = (
     "https://baseballsavant.mlb.com/leaderboard/statcast-park-factors"
-    "?type=year&year=2025&batSide=&stat=index_woba"
+    "?type=year&year={year}&batSide=&stat=index_woba"
 )
 PYB_GAME = ("park_factor",)
 BUGS_FIXED = (
@@ -997,6 +1004,116 @@ def mlb_team_names(season: int) -> dict[int, str]:
     return names
 
 
+def _stat_int(stat: dict, key: str) -> int:
+    try:
+        return int(stat.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def fill_xfip_from_components(frame: pd.DataFrame) -> str | None:
+    """Fill an empty xFIP column from Savant fly balls and the 2025 MLB pitching line.
+
+    2025 totals are a prior for 2026 games. 2026 season totals are not used.
+    Returns the source note when the column was filled.
+    """
+    id_col = first_col(frame, ("player_id", "mlbID", "MLBAMID", "key_mlbam", "mlb_id"))
+    fb_col = first_col(frame, ("flyballs", "fly_balls"))
+    if not id_col or not fb_col:
+        return None
+    published = first_col(frame, ("xfip", "xFIP", "p_xfip"))
+    if published and pd.to_numeric(frame[published], errors="coerce").notna().any():
+        return None
+    try:
+        payload = get_json(
+            f"{API}/stats",
+            {
+                "stats": "season",
+                "group": "pitching",
+                "season": 2025,
+                "playerPool": "All",
+                "limit": 5000,
+                "sportIds": 1,
+                "gameType": "R",
+            },
+        )
+    except Exception as exc:
+        note(f"MLB 2025 pitching totals failed for xFIP ({exc})")
+        return None
+    splits: list[dict] = []
+    for group in payload.get("stats") or []:
+        splits.extend(group.get("splits") or [])
+    if not splits:
+        note("MLB 2025 pitching totals returned no splits for xFIP")
+        return None
+    by_id: dict[int, dict] = {}
+    league = {"outs": 0, "hr": 0, "bb": 0, "hbp": 0, "k": 0, "er": 0}
+    for split in splits:
+        player = split.get("player") or {}
+        stat = split.get("stat") or {}
+        try:
+            pid = int(player.get("id"))
+        except (TypeError, ValueError):
+            continue
+        outs = _stat_int(stat, "outs")
+        hr = _stat_int(stat, "homeRuns")
+        bb = _stat_int(stat, "baseOnBalls")
+        if stat.get("hitByPitch") is not None:
+            hbp = _stat_int(stat, "hitByPitch")
+        else:
+            hbp = _stat_int(stat, "hitBatsmen")
+        strikeouts = _stat_int(stat, "strikeOuts")
+        earned = _stat_int(stat, "earnedRuns")
+        by_id[pid] = {"outs": outs, "hr": hr, "bb": bb, "hbp": hbp, "k": strikeouts}
+        if outs > 0:
+            league["outs"] += outs
+            league["hr"] += hr
+            league["bb"] += bb
+            league["hbp"] += hbp
+            league["k"] += strikeouts
+            league["er"] += earned
+    if league["outs"] < 900:
+        note("MLB 2025 pitching totals were too small to compute an xFIP constant")
+        return None
+    league_ip = league["outs"] / 3
+    raw_fip = (13 * league["hr"] + 3 * (league["bb"] + league["hbp"]) - 2 * league["k"]) / league_ip
+    constant = (league["er"] * 9 / league_ip) - raw_fip
+    paired: list[tuple] = []
+    fb_sum = 0.0
+    hr_sum = 0
+    for idx, row in frame.iterrows():
+        try:
+            pid = int(row[id_col])
+        except (TypeError, ValueError):
+            continue
+        flyballs = parse_rate(row[fb_col])
+        line = by_id.get(pid)
+        if flyballs is None or line is None or line["outs"] <= 0:
+            continue
+        paired.append((idx, flyballs, line))
+        fb_sum += flyballs
+        hr_sum += line["hr"]
+    if fb_sum <= 0 or not paired:
+        note("Savant fly balls did not join to the 2025 MLB pitching line")
+        return None
+    league_hr_fb = hr_sum / fb_sum
+    filled: dict = {}
+    for idx, flyballs, line in paired:
+        ip = line["outs"] / 3
+        expected_hr = flyballs * league_hr_fb
+        filled[idx] = (13 * expected_hr + 3 * (line["bb"] + line["hbp"]) - 2 * line["k"]) / ip + constant
+    frame["xfip"] = pd.Series(filled)
+    note(
+        f"xFIP computed for {len(filled)} pitchers from Savant 2025 flyballs and MLB Stats API 2025 pitching; "
+        f"lgHR/FB={league_hr_fb:.6f} FIP constant={constant:.4f}"
+    )
+    return (
+        "starter xFIP from Baseball Savant 2025 flyballs and MLB Stats API 2025 pitching line, "
+        f"n={len(filled)}, lgHR/FB={league_hr_fb:.6f}, FIP constant={constant:.4f}, "
+        "(13*(FB*lgHR/FB)+3*(BB+HBP)-2*K)/IP+C, IP=outs/3. Joined only onto 2026 games"
+    )
+
+
 def pull_savant_pitching(ext: dict) -> None:
     note("FanGraphs is not called. The last run returned HTTP 403.")
     note("pybaseball Savant wrappers publish expected stats and percentile ranks, not the K% rate, BB% rate, FIP, or xFIP")
@@ -1011,7 +1128,14 @@ def pull_savant_pitching(ext: dict) -> None:
             skip_field(ext, field, "Baseball Savant custom leaderboard returned no rows")
         return
     note(f"Baseball Savant custom leaderboard 2025 rows={len(frame)} cols={list(frame.columns)}")
+    computed = fill_xfip_from_components(frame)
     store_pitcher_table(ext, frame, "Baseball Savant custom leaderboard 2025")
+    if not computed:
+        return
+    ext["skipped"] = [item for item in ext["skipped"] if not item.startswith("xFIP:")]
+    ext["used"] = [item for item in ext["used"] if "xFIP" not in item]
+    ext["have"].add("xFIP")
+    ext["used"].append(computed)
 
 
 def pull_lineup_ops(ext: dict) -> None:
@@ -1053,20 +1177,19 @@ def pull_lineup_ops(ext: dict) -> None:
     )
 
 
-def pull_savant_park(ext: dict) -> None:
+def pull_savant_park_year(year: int) -> tuple[dict[str, float] | None, str]:
     try:
-        text = fetch_text(SAVANT_PARK_URL)
+        text = fetch_text(SAVANT_PARK_URL.format(year=year))
         start = text.find('[{"grouping_venue_conditions"')
         if start < 0:
             raise ValueError("park-factor page had no data array")
         rows, _end = json.JSONDecoder().raw_decode(text[start:])
-        names = mlb_team_names(2025)
+        names = mlb_team_names(year)
     except Exception as exc:
-        skip_field(ext, "park factor", f"Baseball Savant park factors failed ({exc})")
-        return
+        return None, f"{year} Baseball Savant park factors failed ({exc})"
     found: dict[str, float] = {}
     for row in rows:
-        if str(row.get("key_year")) != "2025" or str(row.get("is_sport_mlb")) != "1":
+        if str(row.get("key_year")) != str(year) or str(row.get("is_sport_mlb")) != "1":
             continue
         if row.get("key_bat_side") != "All" or row.get("grouping_venue_conditions") != "All":
             continue
@@ -1079,13 +1202,27 @@ def pull_savant_park(ext: dict) -> None:
         if name and value is not None:
             found[name] = value
     if set(EXPECTED_TEAMS) <= set(found):
+        return found, ""
+    missing = [team for team in EXPECTED_TEAMS if team not in found]
+    return None, f"{year} Baseball Savant park factors missed {', '.join(missing)}"
+
+
+def pull_savant_park(ext: dict) -> None:
+    misses: list[str] = []
+    for year in (2026, 2025):
+        found, reason = pull_savant_park_year(year)
+        if found is None:
+            misses.append(reason)
+            continue
+        window = f"{year - 2}-{year}"
         ext["park"] = found
         ext["have"].add("park_factor")
-        ext["used"].append("Baseball Savant 2025 park factor index_woba, 3-year rolling window published as 2023-2025")
-        note("Baseball Savant park factor index_woba stored for 30 teams; joined only onto 2026 games")
+        ext["used"].append(
+            f"Baseball Savant {year} park factor index_woba, 3-year rolling window published as {window}"
+        )
+        note(f"Baseball Savant {year} park factor index_woba stored for 30 teams; joined only onto 2026 games")
         return
-    missing = [team for team in EXPECTED_TEAMS if team not in found]
-    skip_field(ext, "park factor", f"Baseball Savant park factors missed {', '.join(missing)}")
+    skip_field(ext, "park factor", "; ".join(misses) + ". No park factor was invented.")
 
 
 def pull_pybaseball(years: tuple[int, ...]) -> dict:
@@ -1094,11 +1231,7 @@ def pull_pybaseball(years: tuple[int, ...]) -> dict:
     ext = empty_ext()
     pull_savant_pitching(ext)
     pull_lineup_ops(ext)
-    skip_field(
-        ext,
-        "park factor",
-        "Baseball Savant park factors missed Athletics and Tampa Bay Rays. No park factor was invented.",
-    )
+    pull_savant_park(ext)
     return ext
 
 
@@ -1511,7 +1644,7 @@ def write_notes(summary: dict) -> None:
             f"Maximum date: {summary['data_max']}",
             f"Row count: {summary['rows']}",
             "",
-            f"Features: {summary['feature_count']}. September accuracy: {summary['accuracy']:.4f}.",
+            f"Features: {summary['feature_count']}. Held-out accuracy from 2026-09-01: {summary['accuracy']:.4f}.",
             "",
             "## Bugs fixed",
             "",
@@ -1842,7 +1975,7 @@ def score_prediction_rows(
     away_runs_model.fit(x_train, train["away_runs"].to_numpy())
     note(f"rows {len(frame)}")
     note(f"feature_count {len(features)}")
-    note(f"september_accuracy {accuracy:.4f}")
+    note(f"heldout_accuracy_from_2026-09-01 {accuracy:.4f}")
     note(f"train_rows {len(train)} test_rows {len(test)}")
     if not pred_rows:
         return [], accuracy, features
@@ -1902,7 +2035,12 @@ def confirm_dates(records: list[dict], finals: list[dict]) -> tuple[date, date]:
     note(f"MIN_DATE {data_min.isoformat()}")
     note(f"MAX_DATE {data_max.isoformat()}")
     note(f"SCHEDULE_MAX_FINAL {sched_max.isoformat() if sched_max else 'missing'}")
-    if data_min.year != 2025 or data_max != sched_max or data_max.year != 2026 or data_max.month != 9:
+    if (
+        data_min.year != 2025
+        or data_max != sched_max
+        or data_max <= PREVIOUS_MAX
+        or data_max > AS_OF
+    ):
         note("date check failed; stopping before training")
         raise SystemExit(2)
     pre = [record for record in records if record["game_date"] < START]
@@ -1943,22 +2081,6 @@ def print_known_finals(records: list[dict], schedule: list[dict]) -> None:
 
 def train_and_predict(frame: pd.DataFrame, pred_rows: list[dict], ext: dict, data_min: date, data_max: date) -> None:
     out_rows, accuracy, features = score_prediction_rows(frame, pred_rows, ext, data_min, data_max)
-    slice_rows = []
-    for away_name, home_name in SLICE_MATCHUPS:
-        slice_rows.extend(item for item in out_rows if item["away"] == away_name and item["home"] == home_name)
-    PRED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if len(slice_rows) != len(SLICE_MATCHUPS):
-        note(f"two-game slice has {len(slice_rows)} rows; expected {len(SLICE_MATCHUPS)}")
-        raise SystemExit(2)
-    pd.DataFrame(slice_rows, columns=list(GAME_COLUMNS)).to_csv(PRED_PATH, index=False)
-    note(f"wrote {PRED_PATH}")
-    for item in slice_rows:
-        note(
-            f"prediction {item['away']} at {item['home']} {item['starter_away']} vs {item['starter_home']} "
-            f"p_home={item['home_win_prob']} "
-            f"runs={item['predicted_away_runs']}-{item['predicted_home_runs']} side={item['model_side']}"
-        )
-    write_remaining([item for item in out_rows if item.get("unfinished")])
     keep = [
         "game_pk",
         "game_date",
@@ -1975,7 +2097,33 @@ def train_and_predict(frame: pd.DataFrame, pred_rows: list[dict], ext: dict, dat
     saved["game_date"] = pd.to_datetime(saved["game_date"]).dt.date.astype(str)
     saved[keep].to_csv(TABLE_PATH, index=False)
     note(f"wrote {TABLE_PATH}")
-    note(f"wrote {PRED_PATH}")
+    slice_rows = []
+    for away_name, home_name in SLICE_MATCHUPS:
+        slice_rows.extend(item for item in out_rows if item["away"] == away_name and item["home"] == home_name)
+    if len(slice_rows) == len(SLICE_MATCHUPS):
+        PRED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(slice_rows, columns=list(GAME_COLUMNS)).to_csv(PRED_PATH, index=False)
+        note(f"wrote {PRED_PATH}")
+        for item in slice_rows:
+            note(
+                f"prediction {item['away']} at {item['home']} {item['starter_away']} vs {item['starter_home']} "
+                f"p_home={item['home_win_prob']} "
+                f"runs={item['predicted_away_runs']}-{item['predicted_home_runs']} side={item['model_side']}"
+            )
+    else:
+        note(
+            f"two-game slice has {len(slice_rows)} rows on {data_max.isoformat()}; "
+            f"leaving {PRED_PATH.name} unchanged"
+        )
+    write_remaining([item for item in out_rows if item.get("unfinished")])
+    for relative in (
+        "artifacts/mlb_2026-09-30_all_teams.csv",
+        "artifacts/mlb_2026-09-30_remaining_games.csv",
+    ):
+        path = ROOT / relative
+        if path.exists():
+            path.unlink()
+            note(f"removed outdated snapshot {relative}")
     delete_old_cache()
     write_notes(
         {
@@ -2051,8 +2199,8 @@ def main() -> None:
     cutoff = started.date()
     note(f"script_start_denver {started.isoformat()}")
     note(f"window {START.isoformat()} through finals on or before {cutoff.isoformat()}")
-    if cutoff.year != 2026 or cutoff.month != 9:
-        note(f"Denver date {cutoff.isoformat()} is not September 2026; stopping")
+    if cutoff != AS_OF:
+        note(f"Denver date {cutoff.isoformat()} is not {AS_OF.isoformat()}; stopping")
         raise SystemExit(2)
 
     ext_holder: dict = {"ext": empty_ext()}

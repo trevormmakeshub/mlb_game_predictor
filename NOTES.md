@@ -4,7 +4,7 @@
 
 FanGraphs was not called. The previous run returned HTTP 403.
 
-Sources used: Baseball Savant custom leaderboard 2025 K% n=809, Baseball Savant custom leaderboard 2025 BB% n=809, MLB Stats API 2025 team OPS versus LHP and RHP, starter FIP from the stored MLB Stats API pitching line, prior starts only, (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, IP = outs/3. HBP was present.
+Sources used: Baseball Savant custom leaderboard 2025 K% n=809, Baseball Savant custom leaderboard 2025 BB% n=809, starter xFIP from Baseball Savant 2025 flyballs and MLB Stats API 2025 pitching line, n=809, lgHR/FB=0.169719, FIP constant=3.1351, (13*(FB*lgHR/FB)+3*(BB+HBP)-2*K)/IP+C, IP=outs/3. Joined only onto 2026 games, MLB Stats API 2025 team OPS versus LHP and RHP, starter FIP from the stored MLB Stats API pitching line, prior starts only, (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, IP = outs/3. HBP was present.
 
 Schedule and final box scores remain the MLB Stats API. 2025 Savant and MLB split totals are joined only onto 2026 games.
 
@@ -12,23 +12,23 @@ Schedule and final box scores remain the MLB Stats API. 2025 Savant and MLB spli
 
 - Baseball Savant custom leaderboard 2025 K% n=809
 - Baseball Savant custom leaderboard 2025 BB% n=809
+- starter xFIP from Baseball Savant 2025 flyballs and MLB Stats API 2025 pitching line, n=809, lgHR/FB=0.169719, FIP constant=3.1351, (13*(FB*lgHR/FB)+3*(BB+HBP)-2*K)/IP+C, IP=outs/3. Joined only onto 2026 games
 - MLB Stats API 2025 team OPS versus LHP and RHP
-- starter FIP from the stored MLB Stats API pitching line, prior starts only, (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, IP = outs/3. HBP was present.
+- starter FIP from the stored MLB Stats API pitching line, prior starts only, (13*HR + 3*(BB+HBP) - 2*K) / IP + 3.10, IP = outs/3. HBP was present
 
 ## Fields still skipped
 
-- xFIP: Baseball Savant custom leaderboard 2025 xFIP column was empty
-- park factor: Baseball Savant park factors missed Athletics and Tampa Bay Rays. No park factor was invented.
+- park factor: 2026 Baseball Savant park factors missed Athletics; 2025 Baseball Savant park factors missed Athletics, Tampa Bay Rays. No park factor was invented.
 
 ## Data
 
 The training table is league-wide completed games from 2025-03-01. Pre-2025 rows were dropped. The two-game file is only a slice of the full table.
 
 Minimum date: 2025-03-18
-Maximum date: 2026-10-04
-Row count: 4920
+Maximum date: 2026-10-28
+Row count: 4946
 
-Features: 21. September accuracy: 0.5586.
+Features: 23. Held-out accuracy from 2026-09-01: 0.5475.
 
 ## Bugs fixed
 
@@ -42,6 +42,4 @@ Features: 21. September accuracy: 0.5586.
 
 this model does not price sportsbook props and is not a bet.
 
-park factor missing, xFIP missing
-
-October 1 through October 4 finals were added from the saved MLB Stats API schedule. Starter FIP uses prior pitching lines only. The saved model was not scored. FanGraphs was not called.
+Last final in the table: 2026-10-28 Milwaukee Brewers 4, Tampa Bay Rays 1, World Series. The schedule through 2026-11-07 has no unfinished game. 26 finals were added, including 2026-09-30 Chicago Cubs 1 at San Diego Padres 4. The September 30 wild-card prediction file was left unchanged.
