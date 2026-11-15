@@ -64,6 +64,13 @@ GAME_COLUMNS = (
     "home_win_prob",
     "predicted_away_runs",
     "predicted_home_runs",
+    "predicted_away_points",
+    "predicted_home_points",
+    "predicted_total",
+    "pick_side",
+    "pick_team",
+    "confidence",
+    "confidence_tier",
     "model_side",
     "data_cutoff",
 )
@@ -1989,6 +1996,14 @@ def score_prediction_rows(
     for pos, (_, row) in enumerate(pred.iterrows()):
         prob = float(probs[pos])
         side = row["home"] if prob >= 0.5 else row["away"]
+        away_runs = float(pred_away_runs[pos])
+        home_runs = float(pred_home_runs[pos])
+        if prob >= 0.60 or prob <= 0.40:
+            tier = "high"
+        elif prob >= 0.55 or prob <= 0.45:
+            tier = "medium"
+        else:
+            tier = "low"
         out_rows.append(
             {
                 "date": pd.to_datetime(row["game_date"]).date().isoformat(),
@@ -1997,8 +2012,15 @@ def score_prediction_rows(
                 "starter_away": row["starter_away"],
                 "starter_home": row["starter_home"],
                 "home_win_prob": f"{prob:.4f}",
-                "predicted_away_runs": f"{float(pred_away_runs[pos]):.2f}",
-                "predicted_home_runs": f"{float(pred_home_runs[pos]):.2f}",
+                "predicted_away_runs": f"{away_runs:.2f}",
+                "predicted_home_runs": f"{home_runs:.2f}",
+                "predicted_away_points": f"{away_runs:.2f}",
+                "predicted_home_points": f"{home_runs:.2f}",
+                "predicted_total": f"{away_runs + home_runs:.2f}",
+                "pick_side": "home" if prob >= 0.5 else "away",
+                "pick_team": side,
+                "confidence": f"{abs(prob - 0.5):.4f}",
+                "confidence_tier": tier,
                 "model_side": side,
                 "data_cutoff": cutoff,
                 "unfinished": bool(row.get("unfinished")),

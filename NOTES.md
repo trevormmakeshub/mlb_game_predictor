@@ -30,6 +30,12 @@ Row count: 4946
 
 Features: 23. Held-out accuracy from 2026-09-01: 0.5475.
 
+## 2026-11-14 recheck
+
+The MLB Stats API schedule from 2026-10-29 through 2026-11-14 had 0 games. The training table was not rebuilt. Starter FIP and xFIP were left as they are.
+
+The saved table was scored again. Training rows before 2026-09-01: 4546. Holdout games: 400. Ridge accuracy: 0.5475. The calibrated probability threshold was right on 0.5425 of those games. Holdout total MAE is 3.256 runs. A half-weight of home_rs_14 plus away_rs_14 was rejected. Those columns are 14-day run totals, and the blend MAE was 50.324. Recent form is already the 14-day run and bullpen columns. No extra feature was added. There are 0 next games. This does not price a bet.
+
 ## Bugs fixed
 
 - README pointed at baseball_dataset.py, baseball_model.py, and baseball_prediction.py in the repo root. Those files live in legacy/. The README now points at legacy/ and at scripts/refresh_today.py.
