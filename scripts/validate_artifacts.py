@@ -8,9 +8,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TABLE = ROOT / "artifacts" / "training_table.csv"
-REMAINING = ROOT / "artifacts" / "mlb_2026-11-07_remaining_games.csv"
 CALIBRATION = ROOT / "artifacts" / "calibration.csv"
 HIGH = ROOT / "artifacts" / "high_confidence.csv"
+
+
+def latest_remaining() -> Path | None:
+    matches = sorted((ROOT / "artifacts").glob("mlb_*_remaining_games.csv"))
+    return matches[-1] if matches else None
 REQUIRED_NEXT = (
     "date",
     "home",
@@ -30,9 +34,10 @@ def fail(message: str) -> None:
 
 def main() -> int:
     problems = 0
-    for path in (TABLE, REMAINING, CALIBRATION, HIGH):
-        if not path.exists():
-            fail(f"missing {path.name}")
+    remaining_path = latest_remaining()
+    for path in (TABLE, remaining_path, CALIBRATION, HIGH):
+        if path is None or not path.exists():
+            fail(f"missing {getattr(path, 'name', 'remaining games')}")
             problems += 1
     if problems:
         print(f"validation fail {problems}")
@@ -58,7 +63,7 @@ def main() -> int:
         if missing_scores:
             fail(f"{missing_scores} rows lack runs")
             problems += 1
-    with REMAINING.open(encoding="utf-8", newline="") as handle:
+    with remaining_path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         header = reader.fieldnames or []
         upcoming = list(reader)

@@ -4,7 +4,7 @@
 
 Completed games only, from 2025-03-01 through games that are final when this
 process checks the MLB schedule. America/Denver decides the cutoff date.
-This copy runs only when that date is 2026-11-07. Pre-2025 rows are not kept
+Pre-2025 rows are not kept
 and are not copied forward. The two-game wild-card file is only a slice of
 that table. The remaining-games file lists every game on the Denver date that
 is not final.
@@ -118,6 +118,14 @@ EXPECTED_TEAMS = (
 START = date(2025, 3, 1)
 AS_OF = date(2026, 11, 7)
 TRAIN_END = date(2026, 9, 1)
+
+
+def bind_as_of(day: date) -> None:
+    """Point the dated artifact names at the Denver day of this run."""
+    global AS_OF, ALL_TEAMS_PATH, REMAINING_PATH
+    AS_OF = day
+    ALL_TEAMS_PATH = ROOT / "artifacts" / f"mlb_{day.isoformat()}_all_teams.csv"
+    REMAINING_PATH = ROOT / "artifacts" / f"mlb_{day.isoformat()}_remaining_games.csv"
 PREVIOUS_MAX = date(2026, 10, 4)
 GAME_TYPES = {"R", "F", "D", "L", "W"}
 SCHEMA = 1
@@ -1623,6 +1631,8 @@ def lineup_source(ext: dict, raw_home, raw_away) -> str:
 def write_notes(summary: dict) -> None:
     skipped = summary.get("skipped") or ["none"]
     added = summary.get("used") or ["none"]
+    total_text = "not computed" if summary.get("total_mae") is None else f"{summary['total_mae']:.3f}"
+    blend_text = "not computed" if summary.get("blend_mae") is None else f"{summary['blend_mae']:.3f}"
     body = [
         "# Notes",
         "",
@@ -1652,6 +1662,10 @@ def write_notes(summary: dict) -> None:
             f"Row count: {summary['rows']}",
             "",
             f"Features: {summary['feature_count']}. Held-out accuracy from 2026-09-01: {summary['accuracy']:.4f}.",
+            f"Points method: {summary.get('points_method', 'regression')}. "
+            f"Holdout total MAE: {total_text}. rs_14 blend MAE: {blend_text}.",
+            "rs_14 is a 14-day run total. It is not blended into a single-game total. "
+            "The line is not a live book price. This does not price a bet.",
             "",
             "## Bugs fixed",
             "",
@@ -1944,7 +1958,7 @@ def score_prediction_rows(
     ext: dict,
     data_min: date | None = None,
     data_max: date | None = None,
-) -> tuple[list[dict], float, list[str]]:
+) -> tuple[list[dict], float, list[str], dict]:
     for col in ("home_starter_fip", "away_starter_fip"):
         if col not in frame.columns or not frame[col].notna().any():
             note(f"{col} is not in the table; stopping before training")
@@ -1984,8 +1998,23 @@ def score_prediction_rows(
     note(f"feature_count {len(features)}")
     note(f"heldout_accuracy_from_2026-09-01 {accuracy:.4f}")
     note(f"train_rows {len(train)} test_rows {len(test)}")
+    actual_total = test["home_runs"].to_numpy(dtype=float) + test["away_runs"].to_numpy(dtype=float)
+    regression_total = home_runs_model.predict(x_test) + away_runs_model.predict(x_test)
+    total_mae = float(np.mean(np.abs(regression_total - actual_total)))
+    blend_mae = None
+    if {"home_rs_14", "away_rs_14"}.issubset(test.columns):
+        prior_total = test["home_rs_14"].to_numpy(dtype=float) + test["away_rs_14"].to_numpy(dtype=float)
+        if np.isfinite(prior_total).all():
+            blend_mae = float(np.mean(np.abs((0.5 * regression_total + 0.5 * prior_total) - actual_total)))
+    note(f"total_mae {total_mae:.3f}")
+    if blend_mae is None:
+        note("rs_14 blend mae not computed")
+    else:
+        note(f"rs_14_blend_mae {blend_mae:.3f}")
+    note("points method regression; rs_14 is a 14-day run total and is not blended into a game total")
+    points_report = {"total_mae": total_mae, "blend_mae": blend_mae, "points_method": "regression"}
     if not pred_rows:
-        return [], accuracy, features
+        return [], accuracy, features, points_report
     pred = pd.DataFrame(pred_rows)
     x_pred = scale_apply(pred[features], med, mu, sd)
     probs = calibrator.predict_proba(ridge.decision_function(x_pred).reshape(-1, 1))[:, 1]
@@ -2026,7 +2055,7 @@ def score_prediction_rows(
                 "unfinished": bool(row.get("unfinished")),
             }
         )
-    return out_rows, accuracy, features
+    return out_rows, accuracy, features, points_report
 
 
 def write_remaining(out_rows: list[dict]) -> None:
@@ -2102,7 +2131,7 @@ def print_known_finals(records: list[dict], schedule: list[dict]) -> None:
 
 
 def train_and_predict(frame: pd.DataFrame, pred_rows: list[dict], ext: dict, data_min: date, data_max: date) -> None:
-    out_rows, accuracy, features = score_prediction_rows(frame, pred_rows, ext, data_min, data_max)
+    out_rows, accuracy, features, points_report = score_prediction_rows(frame, pred_rows, ext, data_min, data_max)
     keep = [
         "game_pk",
         "game_date",
@@ -2138,14 +2167,16 @@ def train_and_predict(frame: pd.DataFrame, pred_rows: list[dict], ext: dict, dat
             f"leaving {PRED_PATH.name} unchanged"
         )
     write_remaining([item for item in out_rows if item.get("unfinished")])
-    for relative in (
-        "artifacts/mlb_2026-09-30_all_teams.csv",
-        "artifacts/mlb_2026-09-30_remaining_games.csv",
+    (ROOT / "artifacts" / "last_max_date.txt").write_text(data_max.isoformat() + "\n", encoding="utf-8", newline="\n")
+    for pattern, current in (
+        ("mlb_*_remaining_games.csv", REMAINING_PATH),
+        ("mlb_*_all_teams.csv", ALL_TEAMS_PATH),
     ):
-        path = ROOT / relative
-        if path.exists():
+        for path in (ROOT / "artifacts").glob(pattern):
+            if path.resolve() == current.resolve():
+                continue
             path.unlink()
-            note(f"removed outdated snapshot {relative}")
+            note(f"removed outdated snapshot {path.name}")
     delete_old_cache()
     write_notes(
         {
@@ -2154,10 +2185,18 @@ def train_and_predict(frame: pd.DataFrame, pred_rows: list[dict], ext: dict, dat
             "rows": len(frame),
             "feature_count": len(features),
             "accuracy": accuracy,
+            "total_mae": points_report["total_mae"],
+            "blend_mae": points_report["blend_mae"],
+            "points_method": points_report["points_method"],
             "used": ext.get("used") or [],
             "skipped": ext.get("skipped") or [],
         }
     )
+    card = ROOT / "scripts" / "write_model_card.py"
+    if card.exists():
+        import subprocess
+        result = subprocess.run([sys.executable, str(card)], cwd=ROOT, check=False)
+        note(f"model card exit {result.returncode}")
 
 
 def synthetic_game(meta: dict, hands: dict[int, str]) -> dict:
@@ -2219,11 +2258,9 @@ def main() -> None:
     self_check()
     started = denver_now()
     cutoff = started.date()
+    bind_as_of(cutoff)
     note(f"script_start_denver {started.isoformat()}")
     note(f"window {START.isoformat()} through finals on or before {cutoff.isoformat()}")
-    if cutoff != AS_OF:
-        note(f"Denver date {cutoff.isoformat()} is not {AS_OF.isoformat()}; stopping")
-        raise SystemExit(2)
 
     ext_holder: dict = {"ext": empty_ext()}
     tx_holder: dict = {"rows": []}

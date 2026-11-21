@@ -27,14 +27,11 @@ The training table is league-wide completed games from 2025-03-01. Pre-2025 rows
 Minimum date: 2025-03-18
 Maximum date: 2026-10-28
 Row count: 4946
+Schedule checked through 2026-11-20. No final is dated after 2026-10-28. Next games: 0.
 
 Features: 23. Held-out accuracy from 2026-09-01: 0.5475.
-
-## 2026-11-14 recheck
-
-The MLB Stats API schedule from 2026-10-29 through 2026-11-14 had 0 games. The training table was not rebuilt. Starter FIP and xFIP were left as they are.
-
-The saved table was scored again. Training rows before 2026-09-01: 4546. Holdout games: 400. Ridge accuracy: 0.5475. The calibrated probability threshold was right on 0.5425 of those games. Holdout total MAE is 3.256 runs. A half-weight of home_rs_14 plus away_rs_14 was rejected. Those columns are 14-day run totals, and the blend MAE was 50.324. Recent form is already the 14-day run and bullpen columns. No extra feature was added. There are 0 next games. This does not price a bet.
+Points method: regression. Holdout total MAE: 3.256. rs_14 blend MAE: 50.324.
+rs_14 is a 14-day run total. It is not blended into a single-game total. The line is not a live book price. This does not price a bet.
 
 ## Bugs fixed
 
@@ -47,5 +44,3 @@ The saved table was scored again. Training rows before 2026-09-01: 4546. Holdout
 - pip install -r requirements.txt failed on numpy==2.0.0 because Python 3.13 has no wheel for that pin and this machine has no C compiler. numpy, pandas, scikit-learn, and scipy were pinned to the installed wheels (2.5.3, 3.0.6, 1.9.1, 1.18.1). The retry succeeded.
 
 this model does not price sportsbook props and is not a bet.
-
-Last final in the table: 2026-10-28 Milwaukee Brewers 4, Tampa Bay Rays 1, World Series. The schedule through 2026-11-07 has no unfinished game. 26 finals were added, including 2026-09-30 Chicago Cubs 1 at San Diego Padres 4. The September 30 wild-card prediction file was left unchanged.

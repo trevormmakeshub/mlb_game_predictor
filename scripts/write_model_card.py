@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TABLE = ROOT / "artifacts" / "training_table.csv"
 CALIBRATION = ROOT / "artifacts" / "calibration.csv"
 HIGH = ROOT / "artifacts" / "high_confidence.csv"
-REMAINING = ROOT / "artifacts" / "mlb_2026-11-07_remaining_games.csv"
+def latest_remaining() -> Path:
+    matches = sorted((ROOT / "artifacts").glob("mlb_*_remaining_games.csv"))
+    if matches:
+        return matches[-1]
+    return ROOT / "artifacts" / f"mlb_{date.today().isoformat()}_remaining_games.csv"
+
+
+REMAINING = latest_remaining()
 HOLDOUT = "2026-09-01"
 FEATURES = [
     "home_starter_rest_days",
@@ -143,18 +151,25 @@ def main() -> None:
     print(f"total_mae {total_mae:.3f}")
     print(f"blend_mae {blend_mae:.3f}")
     print(f"features {len(FEATURES)}")
+    high_fields = [
+        "date", "away", "home", "home_win_prob", "pick_side", "pick_team",
+        "confidence", "confidence_tier", "predicted_away_points", "predicted_home_points", "predicted_total",
+    ]
+    remaining_rows = []
+    if REMAINING.exists():
+        with REMAINING.open(encoding="utf-8", newline="") as handle:
+            remaining_rows = list(csv.DictReader(handle))
+    else:
+        REMAINING.parent.mkdir(parents=True, exist_ok=True)
+        with REMAINING.open("w", encoding="utf-8", newline="") as handle:
+            csv.DictWriter(handle, fieldnames=REMAINING_COLUMNS).writeheader()
+    high_rows = [row for row in remaining_rows if row.get("confidence_tier") == "high"]
     with HIGH.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "date", "away", "home", "home_win_prob", "pick_side", "pick_team",
-                "confidence", "confidence_tier", "predicted_away_points", "predicted_home_points", "predicted_total",
-            ],
-        )
+        writer = csv.DictWriter(handle, fieldnames=high_fields, extrasaction="ignore")
         writer.writeheader()
-    with REMAINING.open("w", encoding="utf-8", newline="") as handle:
-        csv.DictWriter(handle, fieldnames=REMAINING_COLUMNS).writeheader()
-    print("remaining 0")
+        writer.writerows(high_rows)
+    print(f"remaining {len(remaining_rows)}")
+    print(f"high {len(high_rows)}")
 
 
 if __name__ == "__main__":
